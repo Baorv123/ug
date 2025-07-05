@@ -1,156 +1,117 @@
 // ==UserScript==
-// @name         Auto UGPhone Gia Bảo
+// @name         Auto UGPHONE Gia Bảo
 // @namespace    https://ugphone.com/
-// @version      3.0
-// @description  Mua máy UGPhone 4H, đăng nhập + đăng xuất bằng LocalStorage, chọn server, hiển thị menu Conan đẹp mắt.
+// @version      1.0
+// @description  Auto mua máy UGPhone theo server (Sing/HongKong), login/logout qua LocalStorage, UI mini có gif nền.
 // @author       Gia Bảo
-// @match        https://www.ugphone.com/toc-portal/*
-// @icon         https://i.pinimg.com/originals/3b/9a/1e/3b9a1ec7b868b4b107bce28f783fb566.gif
-// @grant        GM_xmlhttpRequest
-// @connect      www.ugphone.com
+// @match        https://www.ugphone.com/toc-portal/#/dashboard/*
+// @grant        none
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const servers = {
-    "🇭🇰 HongKong": "1",
-    "🇸🇬 Singapore": "2"
+  // ===== CONFIG =====
+  const gifURL = 'https://i.pinimg.com/originals/3b/9a/1e/3b9a1ec7b868b4b107bce28f783fb566.gif';
+  const networkMap = {
+    'singapore': '3731f6bf-b812-e983-782b-152cdab81276',
+    'hongkong': '3731f6bf-b812-e983-872b-125cdab81276'
   };
+  let selectedServer = 'singapore'; // default
 
-  const gifUrl = "https://i.pinimg.com/originals/3b/9a/1e/3b9a1ec7b868b4b107bce28f783fb566.gif";
-
-  const html = `
-    <div id="gbaomenu" style="position:fixed;top:80px;right:20px;z-index:9999;padding:16px;border-radius:12px;background:white;box-shadow:0 0 12px rgba(0,0,0,0.3);width:300px;font-family:sans-serif">
-      <img src="${gifUrl}" style="width:100%;border-radius:10px;margin-bottom:10px" />
-      <textarea id="local-json" placeholder="Dán JSON localStorage ở đây..." style="width:100%;height:100px;margin-bottom:8px"></textarea>
-      <div style="display:flex;gap:10px;margin-bottom:8px">
-        <button id="btn-login" style="flex:1;padding:8px;border:none;border-radius:6px;background:#4caf50;color:white">Đăng nhập</button>
-        <button id="btn-logout" style="flex:1;padding:8px;border:none;border-radius:6px;background:#f44336;color:white">Đăng xuất</button>
+  // ===== CREATE UI =====
+  const ui = document.createElement('div');
+  ui.innerHTML = `
+    <div id="ugbox" style="position:fixed;top:80px;left:20px;z-index:9999;background:#fff;border-radius:12px;padding:10px;box-shadow:0 0 10px rgba(0,0,0,0.3);width:300px;cursor:move">
+      <div style="text-align:center;margin-bottom:5px">
+        <img src="https://i.pinimg.com/736x/d9/2f/32/d92f3267b029a642788b0cd929be7c2e.jpg" style="height:50px;border-radius:8px">
       </div>
-      <select id="server-select" style="width:100%;padding:6px;border-radius:6px;margin-bottom:8px">
-        ${Object.keys(servers).map(name => `<option value="${servers[name]}">${name}</option>`).join("")}
-      </select>
-      <button id="btn-buy" style="width:100%;padding:10px;background:#2196f3;color:white;border:none;border-radius:6px">🚀 Mua máy 4H</button>
-      <div id="log" style="margin-top:10px;font-size:13px;color:#444"></div>
+      <div style="margin-bottom:5px">
+        <select id="serverSelect" style="width:100%;padding:4px;border-radius:6px">
+          <option value="singapore">Server Singapore</option>
+          <option value="hongkong">Server HongKong</option>
+        </select>
+      </div>
+      <textarea id="localInput" placeholder='Dán LocalStorage JSON vào đây' style='width:100%;height:80px'></textarea>
+      <button id="loginBtn" style="width:100%;margin:4px 0;background:#3498db;color:white;border:none;padding:8px;border-radius:6px">Login</button>
+      <button id="logoutBtn" style="width:100%;margin:4px 0;background:#e74c3c;color:white;border:none;padding:8px;border-radius:6px">Logout</button>
+      <button id="buyBtn" style="width:100%;margin:4px 0;background:#2ecc71;color:white;border:none;padding:8px;border-radius:6px">Mua Máy 4H</button>
+      <div id="ugstatus" style='margin-top:6px;font-size:13px;color:#555;text-align:center'>UGPHONE Tool by Gia Bảo</div>
     </div>
+    <img src="${gifURL}" style="position:fixed;bottom:10px;right:10px;width:150px;border-radius:12px;z-index:9999;pointer-events:none">
   `;
+  document.body.appendChild(ui);
 
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  document.body.appendChild(div);
-
-  // Kéo thả menu
-  const panel = document.getElementById("gbaomenu");
-  panel.style.cursor = "move";
-  let isDown = false, offset = {};
-  panel.addEventListener("mousedown", (e) => {
-    isDown = true;
-    offset = { x: e.offsetX, y: e.offsetY };
-  });
-  document.addEventListener("mouseup", () => isDown = false);
-  document.addEventListener("mousemove", (e) => {
-    if (!isDown) return;
-    panel.style.left = (e.pageX - offset.x) + "px";
-    panel.style.top = (e.pageY - offset.y) + "px";
-  });
-
-  const log = (msg, color = "#333") => {
-    document.getElementById("log").innerHTML = `<span style="color:${color}">${msg}</span>`;
+  // ===== DRAG =====
+  const ugbox = document.getElementById('ugbox');
+  ugbox.onmousedown = function (e) {
+    e.preventDefault();
+    let shiftX = e.clientX - ugbox.getBoundingClientRect().left;
+    let shiftY = e.clientY - ugbox.getBoundingClientRect().top;
+    function moveAt(pageX, pageY) {
+      ugbox.style.left = pageX - shiftX + 'px';
+      ugbox.style.top = pageY - shiftY + 'px';
+    }
+    function onMouseMove(e) {
+      moveAt(e.pageX, e.pageY);
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    ugbox.onmouseup = function () {
+      document.removeEventListener('mousemove', onMouseMove);
+      ugbox.onmouseup = null;
+    };
   };
 
-  document.getElementById("btn-login").onclick = () => {
-    const txt = document.getElementById("local-json").value.trim();
+  // ===== BUTTON EVENTS =====
+  document.getElementById('serverSelect').onchange = e => selectedServer = e.target.value;
+
+  document.getElementById('loginBtn').onclick = () => {
     try {
-      const obj = JSON.parse(txt);
-      for (const [k, v] of Object.entries(obj)) {
-        localStorage.setItem(k, typeof v === "object" ? JSON.stringify(v) : v);
-      }
-      log("✅ Đăng nhập thành công", "green");
-      setTimeout(() => location.reload(), 1000);
+      const json = JSON.parse(document.getElementById('localInput').value);
+      for (let k in json) localStorage.setItem(k, json[k]);
+      location.reload();
     } catch (e) {
-      log("❌ JSON không hợp lệ", "red");
+      document.getElementById('ugstatus').textContent = '❌ JSON không hợp lệ';
     }
   };
 
-  document.getElementById("btn-logout").onclick = () => {
+  document.getElementById('logoutBtn').onclick = () => {
     localStorage.clear();
-    log("✅ Đăng xuất thành công", "orange");
-    setTimeout(() => location.reload(), 1000);
+    location.reload();
   };
 
-  document.getElementById("btn-buy").onclick = async () => {
-    const mqtt = JSON.parse(localStorage.getItem("UGPHONE-MQTT") || "{}");
+  document.getElementById('buyBtn').onclick = async () => {
+    const token = JSON.parse(localStorage.getItem('UGPHONE-MQTT') || '{}').access_token;
+    const loginId = JSON.parse(localStorage.getItem('UGPHONE-MQTT') || '{}').login_id;
+    if (!token || !loginId) return alert('Vui lòng đăng nhập trước!');
+    const network_id = networkMap[selectedServer];
     const headers = {
-      "content-type": "application/json",
-      "access-token": mqtt.access_token || "",
-      "login-id": mqtt.login_id || "",
-      "terminal": "web",
-      "lang": "vi"
+      'access-token': token,
+      'login-id': loginId,
+      'content-type': 'application/json;charset=UTF-8'
     };
-    if (!headers["access-token"]) return log("❌ Chưa đăng nhập", "red");
+
+    const fetchJson = (url, data = {}) => fetch(url, {
+      method: 'POST', headers, body: JSON.stringify(data)
+    }).then(r => r.json());
 
     try {
-      const res = await fetch("https://www.ugphone.com/api/apiv1/fee/newPackage", {
-        method: "POST",
-        headers,
-        body: "{}"
+      const configRes = await fetchJson('https://www.ugphone.com/api/apiv1/info/configList2');
+      const config_id = configRes?.data?.list?.[0]?.android_version?.[0]?.config_id;
+      if (!config_id) throw 'Không lấy được config_id';
+      const priceRes = await fetchJson('https://www.ugphone.com/api/apiv1/fee/queryResourcePrice', {
+        order_type: 'newpay', period_time: '4', unit: 'hour', resource_type: 'cloudphone',
+        resource_param: { pay_mode: 'subscription', config_id, network_id, count: 1, use_points: 3, points: 250 }
       });
-      const json = await res.json();
-      if (json.code !== 200) return log("❌ Không thể tạo gói mới: " + json.message, "red");
-
-      // Lấy config
-      const cfg = await fetch("https://www.ugphone.com/api/apiv1/info/configList2", { headers });
-      const cfgJson = await cfg.json();
-      const config_id = cfgJson?.data?.list?.[0]?.android_version?.[0]?.config_id;
-      if (!config_id) return log("❌ Không tìm được config_id", "red");
-
-      // Lấy gói
-      const meal = await fetch("https://www.ugphone.com/api/apiv1/info/mealList", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ config_id })
+      const amount_id = priceRes?.data?.amount_id;
+      if (!amount_id) throw 'Không có amount_id';
+      const payRes = await fetchJson('https://www.ugphone.com/api/apiv1/fee/payment', {
+        amount_id, pay_channel: 'free'
       });
-      const mealJson = await meal.json();
-      const subscription = mealJson?.data?.list?.[0]?.subscription?.[0];
-      if (!subscription) return log("❌ Không có gói máy", "red");
-
-      const amountReq = await fetch("https://www.ugphone.com/api/apiv1/fee/queryResourcePrice", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          order_type: "newpay",
-          period_time: "4",
-          unit: "hour",
-          resource_type: "cloudphone",
-          resource_param: {
-            pay_mode: "subscription",
-            config_id,
-            network_id: subscription.network_id,
-            count: 1,
-            use_points: 3,
-            points: 250
-          }
-        })
-      });
-      const amountJson = await amountReq.json();
-      const amount_id = amountJson?.data?.amount_id;
-      if (!amount_id) return log("❌ Không tìm thấy amount_id", "red");
-
-      const pay = await fetch("https://www.ugphone.com/api/apiv1/fee/payment", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ amount_id, pay_channel: "free" })
-      });
-      const payJson = await pay.json();
-      if (payJson.code === 200) {
-        log("✅ Mua máy 4H thành công!", "green");
-        setTimeout(() => location.reload(), 1500);
-      } else {
-        log("❌ Mua máy thất bại: " + payJson.message, "red");
-      }
-    } catch (err) {
-      log("❌ Lỗi: " + err.message, "red");
+      if (payRes.code === 200) document.getElementById('ugstatus').textContent = '✅ Mua máy thành công!';
+      else throw payRes.msg || 'Không thể tạo gói mới';
+    } catch (e) {
+      document.getElementById('ugstatus').textContent = '❌ ' + e;
     }
   };
 })();
